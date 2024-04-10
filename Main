@@ -1,0 +1,91 @@
+import csv
+import os
+
+from crewai import Agent
+from crewai_tools import SerperDevTool, ScrapeWebsiteTool, WebsiteSearchTool, tool
+from crewai import Crew, Process
+from crewai import Task
+from crewai_tools.tools.directory_read_tool.directory_read_tool import DirectoryReadTool
+
+
+os.environ["SERPER_API_KEY"] = "SERPER_API_KEY"
+os.environ["OPENAI_API_KEY"] = "OPENAI_API_KEY"
+
+@tool("Integration with a given API")
+def csv_reader() -> str:
+    """read a csv and extract the information"""
+    csv_file = "data/meta/meta_3_14_2024.csv"
+    text = ""
+    with open(csv_file, 'r', newline='') as archivo_csv:
+        result = csv.reader(archivo_csv)
+        for fila in result:
+            text = text + str(fila)
+    return text # string to be sent back to the agent
+
+
+if __name__ == '__main__':
+    search_tool = SerperDevTool()
+    scrape_web_tool = ScrapeWebsiteTool()
+    web_rag_tool = WebsiteSearchTool(summarize=True)
+
+
+    News_week_researcher = Agent(
+        role='News Researcher Daily',
+        goal='Analyze the news of the day {day} and evaluate its impact on the global economy.',
+        verbose=True,
+        memory=True,
+        backstory=(
+            "As a keen observer of news trends, you're dedicated to unraveling"
+            "the intricate connections between news events and market movements,"
+            "seeking insights that could influence financial decisions."
+        ),
+        tools=[search_tool, web_rag_tool],
+        allow_delegation=True
+    )
+    Price_week_researcher = Agent(
+        role='Price Researcher Daily',
+        goal='Analyze the share price of {company} for {day}, and forecast its evolution for the upcoming day..',
+        verbose=True,
+        memory=True,
+        backstory=(
+            "With a sharp eye on market fluctuations, you're dedicated to monitoring"
+            "stock prices and uncovering patterns that could indicate potential"
+            "directions in the market's future movements."
+        ),
+        tools=[csv_reader],
+        allow_delegation=False
+    )
+
+    News_week_research_task = Task(
+        description=(
+            "Identify the most relevant news of the day {day} that are related with the company: {company}."
+            "Focus on identifying how this news may affect the stock market performance."
+            "Your final report should clearly articulate whether you believe that because of global news of the day {day}"
+            "the stock market will go down, hold, or go up."
+        ),
+        expected_output='A comprehensive 3 paragraphs long report on the results and the most important news of this day',
+        tools=[search_tool, web_rag_tool],
+        agent=News_week_researcher,
+    )
+
+    # Writing task with language model configuration
+    Price_week_research_task = Task(
+        description=(
+            "Analyze from the csv file the price of the day {day} of the company {company} to identify recent trends in its market valuation."
+            "Use this data to anticipate potential future movements in the stock market related to the company."
+            "Your final report should provide a clear assessment of whether you believe, based on the price performance over the last day, that the shares are likely to decrease, remain stable, or increase."
+            "For the following day, give me a very specific answer about whether you think it will go up, down, or remain stable. If you're not sure, let me know as well. and show me a confidence confidence level from 1 to 100."
+        ),
+        expected_output='A comprehensive 3 paragraphs long report on the results',
+        tools=[csv_reader],
+        agent=Price_week_researcher,
+        async_execution=False,
+        output_file='results-predictions-daily-search.md'  # Example of output customization
+    )
+    crew = Crew(
+        agents=[News_week_researcher, Price_week_researcher],
+        tasks=[News_week_research_task, Price_week_research_task],
+        process=Process.sequential  # Optional: Sequential task execution is default
+    )
+    result = crew.kickoff(inputs={'company': 'Meta', 'day': '3/14/2024'})
+    print(result)
